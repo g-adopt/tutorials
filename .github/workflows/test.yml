@@ -1,0 +1,43 @@
+name: Test notebook execution
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Test notebook execution
+    runs-on: self-hosted
+    container:
+      image: firedrakeproject/firedrake:latest
+      options: --shm-size 2g
+
+    env:
+      OMP_NUM_THREADS: 1
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Load pyrol wheel from cache
+        uses: actions/cache@v3
+        id: cache-pyrol
+        with:
+          path: /tmp/wheels
+          key: pyrol
+
+      - name: Build pyrol wheel
+        if: steps.cache-pyrol.outputs.cache-hit != 'true'
+        run: |
+          /home/firedrake/firedrake/bin/pip wheel -r git+https://github.com/angus-g/pyrol@rol-2.0-checkpointing -w /tmp/wheels
+
+      - name: Install Python dependencies
+        run: |
+          . /home/firedrake/firedrake/bin/activate
+          python3 -m pip install --no-index -f /tmp/wheels pyroltrilinos
+          python3 -m pip install nbval
+          python3 -m pip install git+https://github.com/g-adopt/g-adopt@adjoint-cases-testing
+
+      - name: Run test
+        run: |
+          . /home/firedrake/firedrake/bin/activate
+          pytest --nbval *.ipynb
