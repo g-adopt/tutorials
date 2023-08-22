@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v3
 
       - name: Load pyrol wheel from cache
-        uses: actions/cache@v3
+        uses: actions/cache/restore@v3
         id: cache-pyrol
         with:
           path: /tmp/wheels
@@ -28,7 +28,14 @@ jobs:
       - name: Build pyrol wheel
         if: steps.cache-pyrol.outputs.cache-hit != 'true'
         run: |
-          /home/firedrake/firedrake/bin/pip wheel -r git+https://github.com/angus-g/pyrol@rol-2.0-checkpointing -w /tmp/wheels
+          /home/firedrake/firedrake/bin/pip wheel git+https://github.com/angus-g/pyrol@rol-2.0-checkpointing -w /tmp/wheels
+
+      - name: Save pyrol to cache
+        if: steps.cache-pyrol.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v3
+        with:
+          path: /tmp/wheels
+          key: pyrol
 
       - name: Install Python dependencies
         run: |
