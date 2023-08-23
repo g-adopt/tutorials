@@ -37,11 +37,13 @@ jobs:
           path: /tmp/wheels
           key: pyrol
 
-      - name: Install Python dependencies
+      - name: Install dependencies
         run: |
+          sudo apt update
+          sudo apt install -y libgl1-mesa-glx xvfb
           . /home/firedrake/firedrake/bin/activate
           python3 -m pip install --no-index -f /tmp/wheels pyroltrilinos
-          python3 -m pip install nbval
+          python3 -m pip install nbval pyvista
           python3 -m pip install git+https://github.com/g-adopt/g-adopt@adjoint-cases-testing
 
       - name: Run test
