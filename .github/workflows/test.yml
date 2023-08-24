@@ -49,4 +49,8 @@ jobs:
       - name: Run test
         run: |
           . /home/firedrake/firedrake/bin/activate
+          export DISPLAY=:99
+          export PYVISTA_OFF_SCREEN=true
+          Xvfb $DISPLAY -screen 0 1024x768x24 > /dev/null 2>&1 &
+          sleep 3
           pytest --nbval *.ipynb
