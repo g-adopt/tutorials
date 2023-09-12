@@ -44,7 +44,7 @@ jobs:
           . /home/firedrake/firedrake/bin/activate
           python3 -m pip install --no-index -f /tmp/wheels pyroltrilinos
           python3 -m pip install nbval pyvista
-          python3 -m pip install git+https://github.com/g-adopt/g-adopt@adjoint-cases-testing
+          python3 -m pip install git+https://github.com/g-adopt/g-adopt@gadopt-restructure
 
       - name: Run test
         run: |
