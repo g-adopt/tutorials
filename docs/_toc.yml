@@ -2,9 +2,3 @@ format: jb-book
 root: index
 chapters:
   - file: 01-spd-helmholtz
-  - file: 02-poisson
-  - file: 03-elasticity
-  - file: 04-burgers
-  - file: 05-pde-constrained-optimisation
-  - file: 06-GD-2D-convection
-  - file: 07-GD-2D-cylindrical
