@@ -1,4 +1,0 @@
-# G-ADOPT Tutorials
-
-```{tableofcontents}
-```
