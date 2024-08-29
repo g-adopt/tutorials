@@ -1,4 +1,4 @@
-# Hands on Firedrake tutorials for G-Adopt workshops
+# Hands on Firedrake tutorials for G-ADOPT workshops
 
 The tutorials presented here are intended to be run on Google Colab. 
 
