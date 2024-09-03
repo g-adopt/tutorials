@@ -33,6 +33,12 @@ except ImportError:
     from gadopt import *
 from gadopt.inverse import *
 
+# Set up plotting
+import pyvista as pv
+pv.set_jupyter_backend("static")
+pv.global_theme.notebook = True
+pv.start_xvfb()
+
 # Open the checkpoint file and subsequently load the mesh:
 checkpoint_filename = "adjoint-demo-checkpoint-state.h5"
 checkpoint_file = CheckpointFile(checkpoint_filename, mode="r")
