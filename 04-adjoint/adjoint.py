@@ -77,7 +77,6 @@ checkpoint_file.close()
 # These fields can be visualised using standard VTK software, such as Paraview or pyvista.
 
 # + tags=["active-ipynb"]
-# import pyvista as pv
 # VTKFile("./visualisation_vtk.pvd").write(Tobs, Tic_ref)
 # dataset = pv.read('./visualisation_vtk.pvd')
 # # Create a plotter object
@@ -385,12 +384,13 @@ minimisation_parameters["Step"]["Trust Region"]["Initial Radius"] = 1e-2
 
 # A notable feature of this optimisation approach in ROL is its checkpointing capability. For every iteration,
 # all information necessary to restart the optimisation from that iteration is saved in the specified `checkpoint_dir`.
+# Due to an issue with Google Colab specifically, we have disabled this feature for this demo, by not specifying
+# a checkpoint directory.
 
 # Define the LinMore Optimiser class with checkpointing capability:
 optimiser = LinMoreOptimiser(
     minimisation_problem,
     minimisation_parameters,
-    checkpoint_dir="optimisation_checkpoint",
 )
 
 # For sake of book-keeping the simulation, we have also implemented a user-defined way of
@@ -439,7 +439,6 @@ optimiser.run()
 # could be compared to `Tic_ref` as the "true solution".
 
 # + tags=["active-ipynb"]
-# import pyvista as pv
 # VTKFile("./solution.pvd").write(optimiser.rol_solver.rolvector.dat[0])
 # dataset = pv.read('./solution.pvd')
 # # Create a plotter object
