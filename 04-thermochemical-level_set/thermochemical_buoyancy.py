@@ -32,6 +32,7 @@ try:
 except ImportError:
     !wget "https://fem-on-colab.github.io/releases/firedrake-install-real.sh" -O "/tmp/firedrake-install.sh" && bash "/tmp/firedrake-install.sh"
     !pip install gadopt[demos]
+    !apt install -y gmsh
     from gadopt import *
 
 # For this problem, it is useful to define a mesh with non-uniform refinement. To this
