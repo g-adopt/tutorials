@@ -283,7 +283,7 @@ with CheckpointFile("Final_State.h5", "w") as final_checkpoint:
 # plotter.close()
 # -
 
-# ![SegmentLocal](temperature_warp.gif "segment")
+# Now you can look at the `temperature_warp.gif` in the Files panel on the left-hand side.
 
 # As before with the base case, the buoyancy differences due to the starting temperature configuration drives an overturning flow. You should see that the temperature field at the final time is very similar to the base case result - in fact they are the same!
 #
@@ -314,8 +314,9 @@ with CheckpointFile("Final_State.h5", "w") as final_checkpoint:
 # First let's load the final state from the base case and calculate the expected dynamic topography with the code below.
 
 # + tags=["active-ipynb"]
+# !wget https://data.gadopt.org/demos/base-case-final-state.h5
 # # load velocity and pressure from final state of the base case run (from a simulation we saved earlier!).
-# with CheckpointFile("../base_case/Final_State.h5", "r") as f:
+# with CheckpointFile("base-case-final-state.h5", "r") as f:
 #     mesh_base = f.load_mesh()
 #     z_base = f.load_function(mesh_base, "Stokes")
 #     T_base = f.load_function(mesh_base, "Temperature")
