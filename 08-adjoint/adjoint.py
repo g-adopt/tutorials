@@ -74,6 +74,10 @@ checkpoint_file.close()
 
 # + tags=["active-ipynb"]
 # import pyvista as pv
+# pv.set_jupyter_backend("static")
+# pv.global_theme.notebook = True
+# pv.start_xvfb()
+#
 # VTKFile("./visualisation_vtk.pvd").write(Tobs, Tic_ref)
 # dataset = pv.read('./visualisation_vtk.pvd')
 # # Create a plotter object
