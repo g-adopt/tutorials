@@ -34,15 +34,14 @@
 # affect any functionality and is safe to ignore.
 
 # +
-![ ! -f pygplates.deb ] && wget -O pygplates.deb https://www.earthbyte.org/download/9079 && apt install --fix-broken ./pygplates.deb && ln -s /usr/lib/pygplates.so /usr/local/lib/python3.10/dist-packages
 ![ ! -f Muller_etal_2022_SE_1Ga_Opt_PlateMotionModel_v1.2.zip ] && wget https://earthbyte.org/webdav/ftp/Data_Collections/Muller_etal_2022_SE/Muller_etal_2022_SE_1Ga_Opt_PlateMotionModel_v1.2.zip && unzip Muller_etal_2022_SE_1Ga_Opt_PlateMotionModel_v1.2.zip
 ![ ! -f mu2_radial.rad ] && wget https://raw.githubusercontent.com/g-adopt/g-adopt/refs/heads/master/demos/mantle_convection/gplates_global/mu2_radial.rad
 
 try:
     from gadopt import *
 except ImportError:
-    !wget "https://fem-on-colab.github.io/releases/firedrake-install-real.sh" -O "/tmp/firedrake-install.sh" && bash "/tmp/firedrake-install.sh"
-    !pip install gadopt[demos]
+    !wget "https://fem-on-colab.github.io/releases/firedrake-install-release-real.sh" -O "/tmp/firedrake-install.sh" && bash "/tmp/firedrake-install.sh"
+    !pip install gadopt[demos] pygplates
     from gadopt import *
 # -
 
