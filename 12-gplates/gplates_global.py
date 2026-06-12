@@ -36,7 +36,7 @@
 
 # +
 ![ ! -f Muller_etal_2022_SE_1Ga_Opt_PlateMotionModel_v1.2.zip ] && wget https://earthbyte.org/webdav/ftp/Data_Collections/Muller_etal_2022_SE/Muller_etal_2022_SE_1Ga_Opt_PlateMotionModel_v1.2.zip && unzip Muller_etal_2022_SE_1Ga_Opt_PlateMotionModel_v1.2.zip
-![ ! -f mu2_radial.rad ] && wget https://raw.githubusercontent.com/g-adopt/g-adopt/refs/heads/master/demos/mantle_convection/gplates_global/mu2_radial.rad
+![ ! -f mu2_radial.rad ] && wget https://raw.githubusercontent.com/g-adopt/g-adopt/refs/heads/main/demos/mantle_convection/gplates_global/mu2_radial.rad
 
 try:
     from gadopt import *
