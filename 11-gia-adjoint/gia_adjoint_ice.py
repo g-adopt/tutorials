@@ -1,15 +1,74 @@
 # Synthetic ice inversion using adjoints
 # =======================================================
+# In the previous tutorials we have seen how to run Glacial Isostatic Adjustment (GIA)
+# models forward in time. Two of the key ingredients are an ice loading history and
+# a viscosity structure of the mantle. However, like many problems in Earth Sciences,
+# these inputs are not known. We need to infer these unknown inputs based on any
+# geological and geophysical observations that we can get our hands on! In the GIA
+# problem this is often in the form of paleo relative sea level markers and present
+# day geodetic observations.
 #
-# In this tutorial, we will use G-ADOPT's adjoint capability to invert for a synthetic ice
-# load in an annulus domain. We will be running a 'twin' experiment where we will try to
-# recover the ice load that we used as part of the earlier 2d cylindrical tutorial,
-# starting from a different initial guess of the ice load.
+# In this tutorial, we will demonstrate how to perform an inversion to recover the
+# ice thickness distribution of an idealised GIA simulation using G-ADOPT. We make
+# the important assumption that we know the viscosity structure of the mantle.
+# In reality, this is not the case, but it will simplify things for this first example!
 #
-# This example focusses on setting up an adjoint problem. These can be summarised as follows:
+# The tutorial involves a *twin experiment*, where we assess the performance of the
+# inversion scheme by inverting the ice thickness distribution to match a synthetic
+# reference simulation, known as the "*Reference Twin*". To create this reference
+# twin, we run a forward GIA simulation and record all relevant fields at each time
+# step. In our case, this will be the displacement and velocity recorded at the
+# surface of the Earth. We will use these outputs of the reference twin as the
+# "observations" for our inversion.
+#
+# [The reference case](../2d_cylindrical_lvv) for this tutorial is the 2D
+# cylindrical tutorial with lateral viscosity variations we saw previously.
+# We have run the model forwards in time and stored the model output as a checkpoint
+# file on our servers. To download the reference benchmark checkpoint file if it
+# doesn't already exist, execute the following command:
+
+# + tags=["active-ipynb"]
+# ![ ! -f forward-2d-cylindrical-disp-vel.h5 ] && wget https://data.gadopt.org/demos/forward-2d-cylindrical-disp-vel.h5
+# -
+
+# Gradient-based optimisation and the Adjoint method
+# --------------------------------------------------
+# So the next obvious question is: how do we actually find the initial ice thickness
+# distribution? A first approach could be just to guess a lot of different ice
+# histories...! We could input these to our GIA code and then compare the misfit
+# between the outputs of our model with the observations.
+#
+# As you can imagine, this can quickly become expensive depending on the cost of the
+# forward model! Also, for the simplest grid based discretisations of ice thickness
+# every time we refine the grid there will be more combinations of parameters to
+# choose! Generally, with 3D finite element models these kind of direct search methods
+# are not practical.
+#
+# The trick up our sleeve is that *G-ADOPT* (thanks to *Firedrake* and *Pyadjoint*),
+# is able to calculate the gradient of an output functional from the forward model,
+# for example a misfit between model predictions and observations, with respect to
+# input parameters via an automatically generated *Adjoint* model. Using this
+# technique, it is possible to compute the gradient of a functional in a cost
+# independent of the number of parameters! In practice, the cost associated with
+# generating the adjoint model is usually a fraction of the (nonlinear) forward model.
+# If you are interested to learn more about Adjoint models, please see this nice
+# [introduction](https://www.dolfin-adjoint.org/en/latest/documentation/maths/)
+# from the Dolfin-Adjoint website.
+#
+# Once we have the adjoint model, we can use the gradient information to speed up our
+# inversion by finding efficient search directions to adjust the unknown input
+# parameters. This forms the basis of an iterative procedure, where we find the
+# gradient of the misfit w.r.t the model inputs, update the model inputs to
+# (hopefully!) decrease the misfit and then find the new gradient and so on...
+# (N.b. the optimisation algorithm we use later on actually also approximates the
+# Hessian, i.e. second order derivatives, to make the inversion process more efficient.)
+#
+# The rest of this tutorial will focus on how to set up an adjoint problem. The key
+# steps are summarised as follows:
 # 1. Defining an objective function.
 # 2. Verifying the accuracy of the gradients using a Taylor test.
-# 3. Setting up and solving a gradient-based minimisation problem for a synthetic ice load.
+# 3. Setting up and solving a gradient-based minimisation problem for a synthetic ice
+# load.
 
 # This example
 # -------------
@@ -19,430 +78,394 @@
 
 try:
     from gadopt import *
-    from gadopt.utility import step_func, vertical_component, CombinedSurfaceMeasure
-    import matplotlib.pyplot as plt
 except ImportError:
     !wget "https://fem-on-colab.github.io/releases/firedrake-install-real.sh" -O "/tmp/firedrake-install.sh" && bash "/tmp/firedrake-install.sh"
     !pip install gadopt[demos]
     from gadopt import *
-    from gadopt.utility import step_func, vertical_component, CombinedSurfaceMeasure
-    import matplotlib.pyplot as plt
 
-# To bring in G-ADOPT's adjoint functionality we need to start taping the forward problem,
-# which we do below. It's also good practice to clear the tape, so that we are starting
-# fresh each time.
+# The novelty of using the overloading approach provided by pyadjoint is that it requires
+# minimal changes to our script to enable the inverse capabilities of G-ADOPT.
+# To turn on the adjoint, one simply imports the inverse module to
+# enable all taping functionality from pyadjoint. Doing so will turn Firedrake's objects
+# to overloaded types, in a way that any UFL operation will be annotated and added to
+# the tape, unless otherwise specified.
 
 from gadopt.inverse import *
+
+# We also import some G-ADOPT utilities for later use.
+
+from gadopt.utility import (
+    CombinedSurfaceMeasure,
+    initialise_background_field
+)
+from gadopt.demos.glacial_isostatic_adjustment.utils import (
+    ice_sheet_disc,
+    setup_heterogenous_viscosity
+)
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+# + tags=["active-ipynb"]
+# from gadopt_demo_utils.gia_demo_utils import (
+#    plot_adj_ring,
+#    plot_displacement,
+#    plot_ice_ring,
+#    plot_viscosity,
+# )
+# -
+
+# We first ensure that the tape is cleared of any previous operations, using the
+# following code
+
 tape = get_working_tape()
 tape.clear_tape()
 
-# In this tutorial we are going load the mesh created by the forward cylindrical demo in the
-# previous tutorial. This makes it easier to load the synthetic data from the previous
-# tutorial for our 'twin' experiment.
+# To verify the tape is empty, we can print all blocks:
 
-# Let's download a checkpoint file we made earlier. This is the same as the forward cylindrical demo except
-# with a longer timestep of 1000 years.
+print(tape.get_blocks())
 
-# + tags=["active-ipynb"]
-# ![ ! -f forward-2d-cylindrical-disp-incdisp-dt1ka.h5 ] && wget https://data.gadopt.org/demos/forward-2d-cylindrical-disp-incdisp-dt1ka.h5
-# -
+# We then begin annotation.
 
-# Set up geometry:
-checkpoint_file = "forward-2d-cylindrical-disp-incdisp-dt1ka.h5"
-with CheckpointFile(checkpoint_file, 'r') as afile:
-    mesh = afile.load_mesh(name='surface_mesh_extruded')
+continue_annotation()
+
+# In this tutorial we are going to load the mesh from the checkpoint created by the
+# [the forward case](../2d_cylindrical_lvv). This makes it
+# easier to load the synthetic data from the previous tutorial for our 'twin'
+# experiment.
+
+forward_checkpoint_file = "forward-2d-cylindrical-disp-vel.h5"
+forward_checkpoint = CheckpointFile(forward_checkpoint_file, "r")
+mesh = forward_checkpoint.load_mesh(name='surface_mesh_extruded')
 bottom_id, top_id = "bottom", "top"
 mesh.cartesian = False
-D = 2891e3  # Depth of domain in m
+boundary = get_boundary_ids(mesh)
 
 # We next set up the function spaces, and specify functions to hold our solutions.
 
 # +
-# Set up function spaces - currently using the bilinear Q2Q1 element pair:
-V = VectorFunctionSpace(mesh, "Q", 2)  # (Incremental) Displacement function space (vector)
-W = FunctionSpace(mesh, "Q", 1)  # Pressure function space (scalar)
-S = TensorFunctionSpace(mesh, "DQ", 2)  # (Discontinuous) Stress tensor function space (tensor)
+V = VectorFunctionSpace(mesh, "CG", 2)  # Displacement function space
+S = TensorFunctionSpace(mesh, "DQ", 1)  # Stress tensor function space
+DG0 = FunctionSpace(mesh, "DQ", 0)  # Density and shear modulus function space
+DG1 = FunctionSpace(mesh, "DQ", 1)  # Viscosity function space
+P1 = FunctionSpace(mesh, "CG", 1)  # Ice thickness function space
 R = FunctionSpace(mesh, "R", 0)  # Real function space (for constants)
 
-Z = MixedFunctionSpace([V, W])  # Mixed function space.
-
-z = Function(Z)  # A field over the mixed function space Z.
-u, p = split(z)  # Returns symbolic UFL expression for u and p
-z.subfunctions[0].rename("Incremental Displacement")
-z.subfunctions[1].rename("Pressure")
-
-displacement = Function(V, name="displacement").assign(0)
-stress_old = Function(S, name="stress_old").assign(0)
+u = Function(V, name='displacement')
+m = Function(S, name="internal variable")
 # -
 
-# Let's set up the background profiles for the material properties with the same values as before.
+# Let's set up the background profiles for the material properties with the same values
+# as before, as well as the laterally varying viscosity field.
 
 # +
 X = SpatialCoordinate(mesh)
 
-# layer properties from spada et al 2011
-radius_values = [6371e3, 6301e3, 5951e3, 5701e3, 3480e3]
-density_values = [3037, 3438, 3871, 4978]
-shear_modulus_values = [0.50605e11, 0.70363e11, 1.05490e11, 2.28340e11]
-viscosity_values = [2, -2, -2, -1.698970004]  # viscosity = 1e23 * 10**viscosity_values
-# N.b. that we have modified the viscosity of the Lithosphere viscosity from
-# Spada et al 2011 because we are using coarse grid resolution
+# Layer properties from Spada et al. (2011)
+radius_values = [6371e3, 6301e3, 5951e3, 5701e3, 3480e3]  # radius values in m
+domain_depth = radius_values[0]-radius_values[-1]
+radius_values_nondim = np.array(radius_values)/domain_depth
 
+density_values = [3037, 3438, 3871, 4978]  # Density in [kg/m^3]
+shear_modulus_values = [0.50605e11, 0.70363e11, 1.05490e11, 2.28340e11]  # Shear modulus in [Pa]
+bulk_shear_ratio = 1.94  # ratio of bulk modulus to shear modulus
+viscosity_values = [1e25, 1e21, 1e21, 2e21]  # Viscosity in [Pa s]
 
-def initialise_background_field(field, background_values, vertical_tanh_width=40e3):
-    profile = background_values[0]
-    sharpness = 1 / vertical_tanh_width
-    depth = sqrt(X[0]**2 + X[1]**2)-radius_values[0]
-    for i in range(1, len(background_values)):
-        centre = radius_values[i] - radius_values[0]
-        mag = background_values[i] - background_values[i-1]
-        profile += step_func(depth, centre, mag, increasing=False, sharpness=sharpness)
+density_scale = 4500
+shear_modulus_scale = 1e11
+viscosity_scale = 1e21
+characteristic_maxwell_time = viscosity_scale / shear_modulus_scale
 
-    field.interpolate(profile)
+density_values_nondim = np.array(density_values)/density_scale
+shear_modulus_values_nondim = np.array(shear_modulus_values)/shear_modulus_scale
+viscosity_values_nondim = np.array(viscosity_values)/viscosity_scale
 
+density = Function(DG0, name="density")
+initialise_background_field(
+    density, density_values_nondim, X, radius_values_nondim)
 
-density = Function(W, name="density")
-initialise_background_field(density, density_values)
+shear_modulus = Function(DG0, name="shear modulus")
+initialise_background_field(
+    shear_modulus, shear_modulus_values_nondim, X, radius_values_nondim)
 
-shear_modulus = Function(W, name="shear modulus")
-initialise_background_field(shear_modulus, shear_modulus_values)
+bulk_modulus = Function(DG0, name="bulk modulus")
+initialise_background_field(
+    bulk_modulus, shear_modulus_values_nondim, X, radius_values_nondim)
 
+background_viscosity = Function(DG1, name="background viscosity")
+initialise_background_field(
+    background_viscosity, viscosity_values_nondim, X, radius_values_nondim)
 
-def bivariate_gaussian(x, y, mu_x, mu_y, sigma_x, sigma_y, rho, normalised_area=False):
-    arg = ((x-mu_x)/sigma_x)**2 - 2*rho*((x-mu_x)/sigma_x)*((y-mu_y)/sigma_y) + ((y-mu_y)/sigma_y)**2
-    numerator = exp(-1/(2*(1-rho**2))*arg)
-    if normalised_area:
-        denominator = 2*pi*sigma_x*sigma_y*(1-rho**2)**0.5
-    else:
-        denominator = 1
-    return numerator / denominator
-
-
-def setup_heterogenous_viscosity(viscosity):
-    heterogenous_viscosity_field = Function(viscosity.function_space(), name='viscosity')
-    antarctica_x, antarctica_y = -2e6, -5.5e6
-
-    low_viscosity_antarctica = bivariate_gaussian(X[0], X[1], antarctica_x, antarctica_y, 1.5e6, 0.5e6, -0.4)
-    heterogenous_viscosity_field.interpolate(-3*low_viscosity_antarctica + viscosity * (1-low_viscosity_antarctica))
-
-    llsvp1_x, llsvp1_y = 3.5e6, 0
-    llsvp1 = bivariate_gaussian(X[0], X[1], llsvp1_x, llsvp1_y, 0.75e6, 1e6, 0)
-    heterogenous_viscosity_field.interpolate(-3*llsvp1 + heterogenous_viscosity_field * (1-llsvp1))
-
-    llsvp2_x, llsvp2_y = -3.5e6, 0
-    llsvp2 = bivariate_gaussian(X[0], X[1], llsvp2_x, llsvp2_y, 0.75e6, 1e6, 0)
-    heterogenous_viscosity_field.interpolate(-3*llsvp2 + heterogenous_viscosity_field * (1-llsvp2))
-
-    slab_x, slab_y = 3e6, 4.5e6
-    slab = bivariate_gaussian(X[0], X[1], slab_x, slab_y, 0.7e6, 0.35e6, 0.7)
-    heterogenous_viscosity_field.interpolate(-1*slab + heterogenous_viscosity_field * (1-slab))
-
-    high_viscosity_craton_x, high_viscosity_craton_y = 0, 6.2e6
-    high_viscosity_craton = bivariate_gaussian(X[0], X[1], high_viscosity_craton_x, high_viscosity_craton_y, 1.5e6, 0.5e6, 0.2)
-    heterogenous_viscosity_field.interpolate(-1*high_viscosity_craton + heterogenous_viscosity_field * (1-high_viscosity_craton))
-
-    return heterogenous_viscosity_field
-
-
-normalised_viscosity = Function(W, name="Normalised viscosity")
-initialise_background_field(normalised_viscosity, viscosity_values)
-normalised_viscosity = setup_heterogenous_viscosity(normalised_viscosity)
-
-viscosity = Function(normalised_viscosity, name="viscosity").interpolate(1e23*10**normalised_viscosity)
-
+viscosity = setup_heterogenous_viscosity(X, background_viscosity)
 # -
 
-# Now let's setup the ice load. For this tutorial we will start with an ice thickness of zero
-# everywhere, but our target ice load will be the same two synthetic ice sheets in the
-# previous demo. An import step is to define our control, i.e. the thing that we are inverting
-# for. In our case, this is the normalised ice thickness.
+# Defining the Control
+# ---------------------
+#
+# The next key step is to define our control, i.e. the field or parameter
+# that we are inverting for. In our case, this is the ice thickness.
+# For this tutorial we will start with an ice thickness of
+# zero everywhere, but our target ice load will be the same two synthetic ice sheets in
+# the previous demo.
+#
+# Since the ice thickness is only defined at the surface of the Earth we define the
+# control on a surface mesh and then interpolate the control ice thickness to the
+# 2D computational domain to ensure that the interior sensitivity is always
+# zero. Let's setup the ice thickness control field now.
 
 # +
-rho_ice = 931
-g = 9.8125
+# Construct a surface mesh
+rmax = radius_values_nondim[0]
+ncells = 180
+surface_mesh = CircleManifoldMesh(ncells, radius=rmax, degree=1, name='surface_mesh')
 
-Hice1 = 1000
-Hice2 = 2000
-year_in_seconds = Constant(3600 * 24 * 365.25)
-# Disc ice load but with a smooth transition given by a tanh profile
-disc_halfwidth1 = (2*pi/360) * 10  # Disk half width in radians
-disc_halfwidth2 = (2*pi/360) * 20  # Disk half width in radians
-surface_dx = 200*1e3
-ncells = 2*pi*radius_values[0] / surface_dx
-surface_resolution_radians = 2*pi / ncells
-colatitude = atan2(X[0], X[1])
-disc1_centre = (2*pi/360) * 25  # centre of disc1
-disc2_centre = pi  # centre of disc2
-disc1 = 0.5*(1-tanh((abs(colatitude-disc1_centre) - disc_halfwidth1) / (2*surface_resolution_radians)))
-disc2 = 0.5*(1-tanh((abs(abs(colatitude)-disc2_centre) - disc_halfwidth2) / (2*surface_resolution_radians)))
-
-target_normalised_ice_thickness = Function(W, name="target normalised ice thickness")
-target_normalised_ice_thickness.interpolate(disc1 + (Hice2/Hice1)*disc2)
-
-normalised_ice_thickness = Function(W, name="normalised ice thickness")
-
-control = Control(normalised_ice_thickness)
-ice_load = rho_ice * g * Hice1 * normalised_ice_thickness
-
-adj_ice_file = VTKFile("adj_ice.pvd")
-# Since we are calculating the sensitivity to a field that is only defined
-# on the top boundary if we do the usual L2 projection (using the
-# mass matrix) to account for the size of the mesh element then we
-# will get spurious oscillating values in the output gradient in
-# cells not connected to the boundary. Instead we do the projection using
-# a surface integral, so that our output gradient accounts for the surface
-# area of each cell.
-converter = RieszL2BoundaryRepresentation(W, top_id)  # convert to surface L2 representation
-
-# We add a diagnostic block to the tape which will output the gradient
-# field every time the tape is replayed.
-tape.add_block(DiagnosticBlock(adj_ice_file, normalised_ice_thickness, riesz_options={'riesz_representation': converter}))
+# Define control on surface mesh
+P1_surf = FunctionSpace(surface_mesh, "CG", 1)  # Function space on surface mesh for control
+ice_thickness_control = Function(P1_surf, name="Ice thickness (control)")  # What we optimise
+control = Control(ice_thickness_control, riesz_map="L2")
 # -
 
+# In the cell above, when we initialised the control field, we also specified the option
+# `riesz_map=L2`. This ensures we use the $L_2$ derivative for optimisation, as opposed
+# to the more traditional Euclidean $l_2$ derivative that is defined with respect
+# to the control vector’s discrete degrees of freedom. The L2 formulation is
+# more appropriate because it properly accounts for variations in mesh cell size.
+# Specifically, the optimisation is driven by the gradients
+# $\left[\frac{\partial J}{\partial h_{\text{load}}}\right]_{L_2(\partial\Omega_{\text{top}})}$
+# such that sensitivity of the objective function to perturbations $\delta h_{\text{load}}$
+# in thickness is given by
+#
+# \begin{equation}
+#   \delta J = \int_{\partial\Omega_{\text{top}}} \left[\frac{\partial J}{\partial h_{\text{load}}}\right]_{L_2(\partial\Omega_{\text{top}})}
+#   \delta h_{\text{load}}~ds
+# \end{equation}
 
-# Let's visualise the ice thickness using pyvista, by plotting a ring outside our synthetic Earth.
+# We now interpolate our control ice thickness field (defined on the surface mesh)
+# into a Firedrake Function defined onto the full 2D computational mesh, so that
+# we can apply this as a load through the boundary conditions. We specify the option
+# `allow_missing_dofs` to let Firedrake know that our target mesh extends outside
+# the source mesh.
+
+# Interpolate control to computational domain (full 2D cylindrical mesh)
+ice_thickness_full = Function(P1, name="Ice thickness (full mesh)")
+ice_thickness_full.interpolate(ice_thickness_control, allow_missing_dofs=True)
+
+# We next set up the relevant parameters for the ice load and set up a target
+# ice thickness field for comparison with our final inversion.
+
+# +
+# Initialise ice loading
+rho_ice = 931 / density_scale
+g = 9.815
+B_mu = Constant(density_scale * domain_depth * g / shear_modulus_scale)
+log("Ratio of buoyancy/shear = rho g D / mu = ", float(B_mu))
+Hice1 = 1000 / domain_depth
+Hice2 = 2000 / domain_depth
+
+# Setup up target ice thickness
+disc_centre1 = (2*pi/360) * 25  # Centre of disc 1 in radians
+disc_centre2 = pi  # Centre of disc 2 in radians
+disc_halfwidth1 = (2*pi/360) * 10  # Disc 1 half width in radians
+disc_halfwidth2 = (2*pi/360) * 20  # Disc 2 half width in radians
+disc1 = ice_sheet_disc(X, disc_centre1, disc_halfwidth1)
+disc2 = ice_sheet_disc(X, disc_centre2, disc_halfwidth2)
+ice_thickness_target = Function(P1, name="Ice thickness (target)")
+ice_thickness_target.interpolate(Hice1 * disc1 + Hice2*disc2)
+# -
+
+# Finally we set up the ice load using the `ice_thickness_full` field (defined on
+# the full mesh) that will force our simulation. Generally, it is a good idea to rescale
+# the unknown control parameters, because optimisation algorithms find it harder to
+# minimise a misfit if the control varies over many orders of mangitude. Here we have
+# used `Hscale` to normalise the magnitude of the control, so that we expect the control
+# ice thickness to vary between 0 and 2.
+
+Hscale = 1000 / domain_depth
+ice_load = B_mu * rho_ice * Hscale * ice_thickness_full
+
+# Let's visualise the ice thickness using pyvista, by plotting a ring outside our
+# synthetic Earth.
 
 # + tags=["active-ipynb"]
 # import pyvista as pv
 # pv.set_jupyter_backend("static")
 # pv.global_theme.notebook = True
 # pv.start_xvfb()
-# ice_cmap = plt.get_cmap("Blues", 25)
 #
-# # Make two points at the bounds of the mesh and one at the center to
-# # construct a circular arc.
-# rmin = 3480e3
-# rmax = 6371e3
-# D = rmax-rmin
-# nz = 32
-# dz = D / nz
+# plot_kwargs = {'scalar_bar_vertical': False,
+#                'scalar_bar_x': 0.2,
+#                'scalar_bar_y':0.1}
 #
-# normal = [0, 0, 1]
-# polar = [radius_values[0]-dz/2, 0, 0]
-# center = [0, 0, 0]
-# angle = 360.0
-# arc = pv.CircularArcFromNormal(center, 10000, normal, polar, angle)
+# text_pos = (1,600)
 #
-# # Stretch line by 20%
-# transform_matrix = np.array(
-#     [
-#         [1.2, 0, 0, 0],
-#         [0, 1.2, 0, 0],
-#         [0, 0, 1.2, 0],
-#         [0, 0, 0, 1],
-#     ])
-#
-#
-# def add_ice(p, m, scalar="normalised ice thickness", scalar_bar_args=None):
-#
-#     if scalar_bar_args is None:
-#         scalar_bar_args = {
-#             "title": 'Normalised ice thickness',
-#             "position_x": 0.2,
-#             "position_y": 0.8,
-#             "vertical": False,
-#             "title_font_size": 22,
-#             "label_font_size": 18,
-#             "fmt": "%.1f",
-#             "font_family": "arial",
-#             "n_labels": 5,
-#         }
-#     data = m.read()[0]  # MultiBlock mesh with only 1 block
-#
-#     arc_data = arc.sample(data)
-#
-#     transformed_arc_data = arc_data.transform(transform_matrix)
-#     p.add_mesh(transformed_arc_data, scalars=scalar, line_width=10, clim=[0, 2], cmap=ice_cmap, scalar_bar_args=scalar_bar_args)
-#
-#
-# visc_file = VTKFile('viscosity.pvd').write(normalised_viscosity)
-# reader = pv.get_reader("viscosity.pvd")
-# visc_data = reader.read()[0]  # MultiBlock mesh with only 1 block
-# visc_cmap = plt.get_cmap("inferno_r", 25)
-#
-#
-# def add_viscosity(p):
-#     p.add_mesh(
-#         visc_data,
-#         component=None,
-#         lighting=False,
-#         show_edges=False,
-#         cmap=visc_cmap,
-#         clim=[-3, 2],
-#         scalar_bar_args={
-#             "title": 'Normalised viscosity',
-#             "position_x": 0.2,
-#             "position_y": 0.1,
-#             "vertical": False,
-#             "title_font_size": 22,
-#             "label_font_size": 18,
-#             "fmt": "%.0f",
-#             "font_family": "arial",
-#         }
-#     )
-#
-#
-# # Read the PVD file
-# updated_ice_file = VTKFile('ice.pvd').write(normalised_ice_thickness, target_normalised_ice_thickness)
-# reader = pv.get_reader("ice.pvd")
+# updated_ice_file = VTKFile('ice.pvd')
+# updated_ice_file.write(ice_thickness_full, ice_thickness_target)
 #
 # # Create a plotter object
 # plotter = pv.Plotter(shape=(1, 2), border=False, notebook=True, off_screen=False)
-# plotter.subplot(0, 0)
-# add_ice(plotter, reader, 'target normalised ice thickness')
-# add_viscosity(plotter)
-# plotter.camera_position = 'xy'
-# plotter.subplot(0, 1)
-# add_ice(plotter, reader, 'normalised ice thickness')
-# add_viscosity(plotter)
 #
+# visc_file = VTKFile('viscosity.pvd').write(viscosity)  # write out viscosity
+#
+# plotter.subplot(0, 0)
+# plot_ice_ring(plotter, scalar='Ice thickness (target)', **plot_kwargs)
+# plot_viscosity(plotter,show_scalar_bar=False)
+# plotter.add_text("Target", position=text_pos)
 # plotter.camera_position = 'xy'
+#
+# plotter.subplot(0, 1)
+# plot_ice_ring(plotter, scalar='Ice thickness (full mesh)')
+# plot_viscosity(plotter, **plot_kwargs)
+# plotter.add_text("Initial Guess", position=text_pos)
+# plotter.camera_position = 'xy'
+#
 # plotter.show(jupyter_backend="static", interactive=False)
-# # Closes and finalizes movie
 # plotter.close()
 # -
 
-# To make this simulation practical for a demo we are going to take longer timesteps than
-# the previous 2d cylindrical demo. Let's choose a timestep (and output frequency) of 1000 years.
+# Let's choose a timestep of 250 years as before.
 
 # +
 # Timestepping parameters
 Tstart = 0
+year_in_seconds = 3600*24*365.25
 time = Function(R).assign(Tstart * year_in_seconds)
 
-dt_years = 1000
-dt = Constant(dt_years * year_in_seconds)
+dt_years = 250
+dt = Constant(dt_years * year_in_seconds/characteristic_maxwell_time)
 Tend_years = 10e3
-Tend = Constant(Tend_years * year_in_seconds)
+Tend = Constant(Tend_years * year_in_seconds/characteristic_maxwell_time)
 dt_out_years = 1e3
-dt_out = Constant(dt_out_years * year_in_seconds)
+dt_out = Constant(dt_out_years * year_in_seconds/characteristic_maxwell_time)
 
-max_timesteps = round((Tend - Tstart * year_in_seconds) / dt)
-log("max timesteps: ", max_timesteps)
+max_timesteps = round((Tend - Tstart * year_in_seconds/characteristic_maxwell_time) / dt)
 
-dump_period = round(dt_out / dt)
-log("dump_period:", dump_period)
-log(f"dt: {float(dt / year_in_seconds)} years")
-log(f"Simulation start time: {Tstart} years")
+output_frequency = round(dt_out / dt)
 # -
 
-# Similar to before, we setup the boundary conditions, this time using the normalised
-# ice thickness to account for ice covered regions when calculating the density
-# contrast across the free surface.
-
-# Setup boundary conditions
-exterior_density = rho_ice * normalised_ice_thickness
-stokes_bcs = {
-    top_id: {
-        'normal_stress': ice_load,
-        'free_surface': {'delta_rho_fs': density - exterior_density}
-    },
-    bottom_id: {'un': 0}
-}
-
-
-# We also need to specify a G-ADOPT approximation, nullspaces and finally the
-# stokes solver as before.  For this tutorial we will use a direct solver for
-# the matrix system, so we don't need to provide the near nullspace like before.
-
+# We also need to specify boundary conditions, a G-ADOPT approximation, nullspaces and
+# finally the Stokes solver.
 
 # +
-approximation = SmallDisplacementViscoelasticApproximation(density, shear_modulus, viscosity, g=g)
+stokes_bcs = {boundary.top: {'free_surface': {'normal_stress': ice_load}},
+              boundary.bottom: {'un': 0}
+              }
 
-Z_nullspace = create_stokes_nullspace(Z, closed=False, rotational=True)
+approximation = MaxwellApproximation(
+    bulk_modulus=bulk_modulus,
+    density=density,
+    shear_modulus=shear_modulus,
+    viscosity=viscosity,
+    B_mu=B_mu,
+    bulk_shear_ratio=bulk_shear_ratio)
 
-stokes_solver = ViscoelasticStokesSolver(z, stress_old, displacement, approximation,
-                                         dt, bcs=stokes_bcs, constant_jacobian=True,
-                                         nullspace=Z_nullspace, transpose_nullspace=Z_nullspace,
-                                         solver_parameters="direct")
+iterative_parameters = {"mat_type": "matfree",
+                        "snes_type": "ksponly",
+                        "ksp_type": "gmres",
+                        "ksp_rtol": 1e-5,
+                        "pc_type": "python",
+                        "pc_python_type": "firedrake.AssembledPC",
+                        "assembled_pc_type": "gamg",
+                        "assembled_mg_levels_pc_type": "sor",
+                        "assembled_pc_gamg_threshold": 0.01,
+                        "assembled_pc_gamg_square_graph": 100,
+                        "assembled_pc_gamg_coarse_eq_limit": 1000,
+                        "assembled_pc_gamg_mis_k_minimum_degree_ordering": True,
+                        }
+
+nullspace = rigid_body_modes(V, rotational=True)
+near_nullspace = rigid_body_modes(V, rotational=True, translations=[0, 1])
+
+stokes_solver = InternalVariableSolver(
+    u,
+    approximation,
+    dt=dt,
+    internal_variables=m,
+    bcs=stokes_bcs,
+    solver_parameters=iterative_parameters,
+    nullspace=nullspace,
+    transpose_nullspace=nullspace,
+    near_nullspace=near_nullspace
+)
 # -
 
-# We next set up our output in VTK format. This format can be read by programs like pyvista and Paraview.
+# We next set up our output in VTK format. This format can be read by programs like
+# pyvista and Paraview.
 
 # +
 # Create a velocity function for plotting
 velocity = Function(V, name="velocity")
-velocity.interpolate(z.subfunctions[0]/dt)
+disp_old = Function(V, name="old_disp")
 # Create output file
 output_file = VTKFile("output.pvd")
-output_file.write(*z.subfunctions, displacement, velocity)
+output_file.write(u, m, velocity)
 
 plog = ParameterLog("params.log", mesh)
 plog.log_str(
-    "timestep time dt u_rms u_rms_surf ux_max disp_min disp_max"
+    "timestep time dt u_rms u_rms_surf uv_min"
 )
 
 checkpoint_filename = "viscoelastic_loading-chk.h5"
 
-gd = GeodynamicalDiagnostics(z, density, bottom_id, top_id)
-
-# Initialise a (scalar!) function for logging vertical displacement
-U = FunctionSpace(mesh, "CG", 2)  # (Incremental) Displacement function space (scalar)
-vertical_displacement = Function(U, name="Vertical displacement")
-
-
+gd = GIADiagnostics(u, bottom_id=boundary.bottom, top_id=boundary.top)
 # -
 
-# Now is a good time to setup a helper function for defining the time integrated misfit that we need
-# later as part of our overall objective function. This is going to be called at each timestep of
-# the forward run to calculate the difference between the displacement and velocity at the surface
-# compared our reference forward simulation.
+# Now is a good time to setup a helper function for defining the time integrated misfit
+# that we need later as part of our overall objective function. This is going to be
+# called at each timestep of the forward run to calculate the difference between the
+# displacement and velocity at the surface compared to our reference forward simulation.
 
 # +
-def integrated_time_misfit(timestep, velocity_misfit, displacement_misfit):
-    with CheckpointFile(checkpoint_file, 'r') as afile:
-        target_incremental_displacement = afile.load_function(mesh, name="Incremental Displacement", idx=timestep)
-        target_displacement = afile.load_function(mesh, name="Displacement", idx=timestep)
-    circumference = 2 * pi * radius_values[0]
-    target_velocity = target_incremental_displacement/dt_years
-    velocity.interpolate(z.subfunctions[0]/dt_years)
-    velocity_error = velocity - target_velocity
-    velocity_scale = 10/dt_years
-    velocity_misfit += assemble(dot(velocity_error, velocity_error) / (circumference * velocity_scale**2) * ds(top_id))
+# Overload surface integral measure for G-ADOPT's extruded meshes.
+ds = CombinedSurfaceMeasure(mesh, degree=6)
 
-    displacement_error = displacement - target_displacement
-    displacement_scale = 50
-    displacement_misfit += assemble(dot(displacement_error, displacement_error) / (circumference * displacement_scale**2) * ds(top_id))
+
+def integrated_time_misfit(timestep, velocity_misfit, displacement_misfit):
+    target_displacement = forward_checkpoint.load_function(mesh, name="displacement", idx=timestep)
+    target_velocity = forward_checkpoint.load_function(mesh, name="velocity", idx=timestep)
+    circumference = 2 * pi * radius_values_nondim[0]
+    velocity_error = velocity - target_velocity
+    velocity_scale = 1e-5
+    velocity_misfit += assemble(dot(velocity_error, velocity_error) / (circumference * velocity_scale**2) * ds(boundary.top))
+
+    displacement_error = u - target_displacement
+    displacement_scale = 1e-4
+    displacement_misfit += assemble(dot(displacement_error, displacement_error) / (circumference * displacement_scale**2) * ds(boundary.top))
     return velocity_misfit, displacement_misfit
 
 
-# Overload surface integral measure for G-ADOPT's extruded meshes.
-ds = CombinedSurfaceMeasure(mesh, degree=6)
 # -
 
-# Now let's run the simulation! This should be the same as before except we are calculating the surface
+# Now let's run the simulation! This is the same as the previous tutorial except we are calculating the surface
 # misfit between our current simulation and the reference run at each timestep.
 
 # +
 velocity_misfit = 0
 displacement_misfit = 0
 
-for timestep in range(max_timesteps+1):
+for timestep in range(1, max_timesteps+1):
 
-    stokes_solver.solve()
-    velocity_misfit, displacement_misfit = integrated_time_misfit(timestep, velocity_misfit, displacement_misfit)
     time.assign(time+dt)
+    stokes_solver.solve()
 
-    if timestep % dump_period == 0:
-        # First output step is after one solve i.e. roughly elastic displacement
-        # provided dt < maxwell time.
-        log("timestep", timestep)
+    velocity.interpolate((u - disp_old)/dt)
+    disp_old.assign(u)
 
-        output_file.write(*z.subfunctions, displacement, velocity)
-
-        with CheckpointFile(checkpoint_filename, "w") as checkpoint:
-            checkpoint.save_function(z, name="Stokes")
-            checkpoint.save_function(displacement, name="Displacement")
-            checkpoint.save_function(stress_old, name="Deviatoric stress")
-
-    vertical_displacement.interpolate(vertical_component(displacement))
+    velocity_misfit, displacement_misfit = integrated_time_misfit(timestep, velocity_misfit, displacement_misfit)
 
     # Log diagnostics:
-    plog.log_str(
-        f"{timestep} {float(time)} {float(dt)} "
-        f"{gd.u_rms()} {gd.u_rms_top()} {gd.ux_max(top_id)} "
-        f"{vertical_displacement.dat.data.min()} {vertical_displacement.dat.data.max()}"
-    )
+    plog.log_str(f"{timestep} {time} {float(dt)} {gd.u_rms()} "
+                 f"{gd.u_rms_top()} {gd.ux_max(boundary.top)} "
+                 f"{gd.uv_min(boundary.top)}"
+                 )
+
+    if timestep % output_frequency == 0:
+        log("timestep", timestep)
+
+        output_file.write(u, m, velocity)
+
+        with CheckpointFile(checkpoint_filename, "w") as checkpoint:
+            checkpoint.save_function(u, name="displacement")
+            checkpoint.save_function(m, name="internal variable")
 # -
 
 # As we can see from the plot below there is no displacement at the final time given there is no ice load!
@@ -455,25 +478,9 @@ for timestep in range(max_timesteps+1):
 # # Create a plotter object
 # plotter = pv.Plotter(shape=(1, 1), border=False, notebook=True, off_screen=False)
 #
-# # Make a colour map
-# boring_cmap = plt.get_cmap("inferno_r", 25)
+# # Plot displacement
 #
-# # Read last timestep
-# reader.set_active_time_point(10)
-# data = reader.read()[0]
-# # Artificially warp the output data in the vertical direction by the free surface height
-# # Note the mesh is not really moving!
-# warped = data.warp_by_vector(vectors="displacement", factor=1500)
-# arrows = warped.glyph(orient="velocity", scale="velocity", factor=1e14, tolerance=0.01)
-# # Add the warped displacement field to the frame
-# plotter.add_mesh(
-#     warped,
-#     scalars="displacement",
-#     component=None,
-#     lighting=False,
-#     clim=[0, 600],
-#     cmap=boring_cmap,
-#     scalar_bar_args={
+# disp_scalar_bar_args={
 #         "title": 'Displacement (m)',
 #         "position_x": 0.85,
 #         "position_y": 0.3,
@@ -483,64 +490,43 @@ for timestep in range(max_timesteps+1):
 #         "fmt": "%.0f",
 #         "font_family": "arial",
 #     }
-# )
+# plot_displacement(plotter, disp='displacement', vel='velocity') #, scalar_bar_args=disp_scalar_bar_args)
 #
-# ice_scalar_bar_args = {"title": 'Normalised ice thickness',
-#                        "position_x": 0.1,
-#                        "position_y": 0.3,
-#                        "vertical": True,
-#                        "title_font_size": 22,
-#                        "label_font_size": 18,
-#                        "fmt": "%.1f",
-#                        "font_family": "arial",
-#                        "n_labels": 5,
-#                        }
+# plot_ice_ring(plotter, scalar='Ice thickness (full mesh)')
 #
-# reader = pv.get_reader("ice.pvd")
-# add_ice(plotter, reader, 'normalised ice thickness', scalar_bar_args=ice_scalar_bar_args)
 # plotter.camera_position = 'xy'
+# plotter.add_text("Time = 10 ka")
 # plotter.show(jupyter_backend="static", interactive=False)
-# # Closes and finalizes movie
 # plotter.close()
 # -
 
+# The inverse problem
+# ------------------------------
+#
 # Now we can define our overall objective function that we want to minimise.
 # This includes the time integrated displacement and velocity misfit at the
-# surface as we discussed above. It is also a good idea to add a smoothing
-# and damping term to help regularise the inversion problem.
+# surface as we discussed above.
 
-# +
-circumference = 2 * pi * radius_values[0]
-
-alpha_smoothing = 1
-alpha_damping = 0.1
-damping = assemble((normalised_ice_thickness) ** 2 / circumference * ds(top_id))
-smoothing = assemble(dot(grad(normalised_ice_thickness), grad(normalised_ice_thickness)) / circumference * ds(top_id))
-
-J = (displacement_misfit + velocity_misfit) / max_timesteps + alpha_damping * damping + alpha_smoothing * smoothing
+J = (displacement_misfit + velocity_misfit) / max_timesteps
 log("J = ", J)
-# -
 
-
-# Let's also pause
-# annotation as we are now done with the forward terms.
+# Let's also pause annotation as we are now done with the forward terms.
 
 pause_annotation()
 
 # Let's setup some call backs to help us keep track of the inversion.
 
 # +
-updated_ice_thickness = Function(normalised_ice_thickness, name="updated ice thickness")
+updated_ice_thickness = Function(ice_thickness_full, name="Ice thickness (updated)")
 updated_ice_thickness_file = VTKFile("updated_ice_thickness.pvd")
-updated_displacement = Function(displacement, name="updated displacement")
-updated_velocity = Function(z.subfunctions[0], name="updated velocity")
+updated_displacement = Function(V, name="Displacement (updated)")
+updated_velocity = Function(V, name="Velocity (velocity)")
 updated_out_file = VTKFile("updated_out.pvd")
 
-with CheckpointFile(checkpoint_file, 'r') as afile:
-    final_target_incremental_displacement = afile.load_function(mesh, name="Incremental Displacement", idx=10)
-    final_target_displacement = afile.load_function(mesh, name="Displacement", idx=10)
+final_target_displacement = forward_checkpoint.load_function(mesh, name="displacement", idx=max_timesteps)
+final_target_velocity = forward_checkpoint.load_function(mesh, name="velocity", idx=max_timesteps)
+forward_checkpoint.close()
 
-final_target_velocity = Function(V, name="target velocity").interpolate(final_target_incremental_displacement / dt_years)
 functional_values = []
 
 
@@ -550,85 +536,63 @@ def eval_cb(J, m):
     else:
         functional_values.append(J)
 
-    circumference = 2 * pi * radius_values[0]
     # Define the component terms of the overall objective functional
     log("displacement misfit", displacement_misfit.block_variable.checkpoint / max_timesteps)
     log("velocity misfit", velocity_misfit.block_variable.checkpoint / max_timesteps)
 
-    damping = alpha_damping * assemble((normalised_ice_thickness.block_variable.checkpoint) ** 2 / circumference * ds(top_id))
-    smoothing = alpha_smoothing * assemble(dot(grad(normalised_ice_thickness.block_variable.checkpoint), grad(normalised_ice_thickness.block_variable.checkpoint)) / circumference * ds(top_id))
-    log("damping", damping)
-    log("smoothing", smoothing)
-
     # Write out values of control and final forward model results
-    updated_ice_thickness.assign(m)
-    updated_ice_thickness_file.write(updated_ice_thickness, target_normalised_ice_thickness)
-    updated_displacement.interpolate(displacement.block_variable.checkpoint)
-    updated_velocity.interpolate(z.subfunctions[0].block_variable.checkpoint / dt)
-    updated_out_file.write(updated_displacement, final_target_displacement, updated_velocity, final_target_velocity)
+    updated_ice_thickness.assign(ice_thickness_full.block_variable.checkpoint)
+    updated_ice_thickness_file.write(updated_ice_thickness)
+    updated_displacement.interpolate(u.block_variable.checkpoint)
+    updated_velocity.interpolate(velocity.block_variable.checkpoint)
+    updated_out_file.write(
+        updated_displacement,
+        final_target_displacement,
+        updated_velocity,
+        final_target_velocity)
 
 
 # -
 
+# Define the Reduced Functional
+# -----------------------------
 # The next important step is to define the reduced functional. This is pyadjoint's way of
 # associating our objective function with the control variable that we are trying to
-# optimise. We can pass our call back function which will be called every time
-# the functional is evaluated.
+# optimise. It does this without explicitly depending on all intermediary
+# state variables, hence the name "reduced".
+#
+# To define the reduced functional, we provide the class with an objective (which is an
+# overloaded UFL object) and the control. We can also pass our call back function which
+# will be called every time the functional is evaluated.
 
 reduced_functional = ReducedFunctional(J, control, eval_cb_post=eval_cb)
 
+# ### Verifying the forward tape
+#
+#
 # A good check to see if the forward taping worked is to rerun the forward model based on
 # the operations stored on the tape. We can do this by providing the control to the
-# reducted functional and print out the answer - it is good to see they are the same!
+# reduced functional and print out the answer - it is good to see they are the same!
 
 log("J", J)
-log("replay tape RF", reduced_functional(normalised_ice_thickness))
+log("Replay tape RF", reduced_functional(ice_thickness_control))
 
+# ### Visualising the derivative
+#
 # We can now calculate the derivative of our objective function with respect to the
 # ice thickness.  This is as simple as calling the `derivative()` method on  our
 # reduced functional.
 
-dJdm = reduced_functional.derivative()
+# +
+dJdm = reduced_functional.derivative(apply_riesz=True)
 
-# We can also plot the derivative using pyvista. First of all let's define another helper
-# function to plot the sensitivity to the ice thickness as a ring outside the domain.
-
-
-def add_sensitivity_ring(p, m, scalar_bar_args=None):
-    # Make a colour map
-    adj_cmap = plt.get_cmap("coolwarm", 25)
-    if scalar_bar_args is None:
-        scalar_bar_args = {
-            "title": 'Adjoint sensitivity',
-            "position_x": 0.2,
-            "position_y": 0.8,
-            "vertical": False,
-            "title_font_size": 22,
-            "label_font_size": 18,
-            "fmt": "%.1e",
-            "font_family": "arial",
-            "n_labels": 3,
-        }
-    data = m.read()[0]  # MultiBlock mesh with only 1 block
-
-    arc_data = arc.sample(data)
-
-    transform_matrix = np.array(
-        [
-            [1.1, 0, 0, 0],
-            [0, 1.1, 0, 0],
-            [0, 0, 1.1, 0],
-            [0, 0, 0, 1],
-        ])
-
-    transformed_arc_data = arc_data.transform(transform_matrix)
-    p.add_mesh(transformed_arc_data, line_width=8, scalar_bar_args=scalar_bar_args, clim=[-5e-7, 5e-7], cmap=adj_cmap)
+grad_file = VTKFile("adj_ice.pvd").write(dJdm)
+# -
 
 
-# Next we read in the file that was written out as part of the diagnostic callback
-# added to the tape earlier. We can see there is a clear hemispherical pattern in
+# We can see there is a clear hemispherical pattern in
 # the gradients. Red indicates that increasing the ice thickness here would increase
-# out objective function and blue areas indicates that increasing the ice thickness
+# our objective function and blue areas indicates that increasing the ice thickness
 # here would decrease our objective function. In the 'southern' hemisphere
 # where we have the biggest ice load the gradient is negative, which makes sense as
 # we expect increasing the ice thickness here to reduce our surface misfit.
@@ -640,27 +604,31 @@ def add_sensitivity_ring(p, m, scalar_bar_args=None):
 # # Create a plotter object
 # plotter = pv.Plotter(shape=(1, 2), border=False, notebook=True, off_screen=False)
 # plotter.subplot(0, 0)
-# add_ice(plotter, reader, 'target normalised ice thickness')
-# add_viscosity(plotter)
+# plot_ice_ring(plotter, scalar='Ice thickness (target)', **plot_kwargs)
+# plot_viscosity(plotter, show_scalar_bar=False)
+# plotter.add_text("Target", position=text_pos)
 # plotter.camera_position = 'xy'
 # plotter.subplot(0, 1)
-# add_ice(plotter, reader, 'normalised ice thickness')
-# add_viscosity(plotter)
-#
-# add_sensitivity_ring(plotter, adj_reader)
+# plot_ice_ring(plotter, scalar='Ice thickness (full mesh)')
+# plot_viscosity(plotter, show_scalar_bar=False)
+# plot_adj_ring(plotter, fname='adj_ice.pvd', stretch=1.4, **plot_kwargs)
 # plotter.camera_position = 'xy'
+# plotter.add_text("Initial Guess", position=text_pos)
 # plotter.show(jupyter_backend="static", interactive=False)
 # # Closes and finalizes movie
 # plotter.close()
 # -
 
-# A good way to verify this the gradient is correct is to carry out a Taylor test. For the control, $I_h$,
-# reduced functional, $J(I_h)$, and its derivative,
-# $\frac{\mathrm{d} J}{\mathrm{d} I_h}$, the Taylor remainder convergence test can be expressed as:
+# ### Verification of Gradients via a Taylor Test
+#
+# A good way to verify the gradient is correct is to carry out a Taylor test. For
+# the control, $I_h$, reduced functional, $J(I_h)$, and its derivative,
+# $\frac{\mathrm{d} J}{\mathrm{d} I_h}$, the Taylor remainder convergence test can be
+# expressed as:
 #
 # $$ \left| J(I_h + h \,\delta I_h) - J(I_h) - h\,\frac{\mathrm{d} J}{\mathrm{d} I_h} \cdot \delta I_h \right| \longrightarrow 0 \text{ at } O(h^2). $$
 #
-# The expression on the left-hand side is termed the second-order Taylor remainder. i
+# The expression on the left-hand side is termed the second-order Taylor remainder.
 # This term's convergence rate of $O(h^2)$ is a robust indicator for
 # verifying the computational implementation of the gradient calculation.
 # Essentially, if you halve the value of $h$, the magnitude
@@ -673,43 +641,48 @@ def add_sensitivity_ring(p, m, scalar_bar_args=None):
 #
 # ### Performing Taylor Tests
 #
-# In our implementation, we perform a second-order Taylor remainder test for each
-# term of the objective functional. The test involves
-# computing the functional and the associated gradient when randomly perturbing
-# the initial temperature field, $T_{ic}$, and subsequently
-# halving the perturbations at each level.
+# The test involves computing the functional and the associated gradient when randomly
+# perturbing the ice thickness field, $I_h$, and subsequently halving the perturbations
+# at each level.
 #
 # Here is how you can perform a Taylor test in the code:
 
-h = Function(normalised_ice_thickness)
+# +
+h = Function(ice_thickness_control)
 h.dat.data[:] = np.random.random(h.dat.data_ro.shape)
-taylor_test(reduced_functional, normalised_ice_thickness, h)
+minconv = taylor_test(reduced_functional, ice_thickness_control, h)
 
+log("Expected rate: 2.0 (quadratic), Achieved:", minconv)
+
+with open("taylor_test_minconv.txt", "w") as f:
+    f.write(str(minconv))
+# -
+
+# ### Setting up the inversion
+#
 # Now that we have verified our gradient is correct, let's start setting up an inversion.
 # First of all we will define some bounds that we enforce the control to lie within.
 # For this problem the lower bound of zero ice thickness is particularly important,
 # as we do not want negative ice thicknesses!
 
 # +
-ice_thickness_lb = Function(normalised_ice_thickness.function_space(), name="Lower bound ice thickness")
-ice_thickness_ub = Function(normalised_ice_thickness.function_space(), name="Upper bound ice thickness")
+ice_thickness_lb = Function(ice_thickness_control.function_space(), name="ice thickness (lower bound)")
+ice_thickness_ub = Function(ice_thickness_control.function_space(), name="Ice thickness (upper bound)")
 ice_thickness_lb.assign(0.0)
 ice_thickness_ub.assign(5)
 
 bounds = [ice_thickness_lb, ice_thickness_ub]
 # -
 
-# Next we setup a pyadjoint minimization problem. We tweak GADOPT's default minimisation
+# Next we setup a pyadjoint minimization problem. We tweak G-ADOPT's default minimisation
 # parameters (found in `gadopt/inverse.py`) for our problem. We limit the number of
-# iterations to 15 just so that the demo is quick to run. We also increase the size of
-# the initial radius of the trust region so that the inversion gets going a bit quicker
-# than the default setting.
+# iterations to 5 just so that the demo is quick to run. (N.b. 20 iterations gives a
+# very accurate answer.)
 
 # +
 minimisation_problem = MinimizationProblem(reduced_functional, bounds=bounds)
 
-minimisation_parameters["Status Test"]["Iteration Limit"] = 15
-minimisation_parameters["Step"]["Trust Region"]["Initial Radius"] = 1e4
+minimisation_parameters["Status Test"]["Iteration Limit"] = 5
 
 optimiser = LinMoreOptimiser(
     minimisation_problem,
@@ -723,11 +696,13 @@ functional_values = []
 # -
 
 
+# ### Running the inversion
+#
 # Now let's run the inversion!
 
 optimiser.run()
 
-# If we're performing mulitple successive optimisations, we want
+# If we're performing multiple successive optimisations, we want
 # to ensure the annotations are switched back on for the next code
 # to use them
 
@@ -741,87 +716,39 @@ continue_annotation()
 # data = reader.read()[0]  # MultiBlock mesh with only 1 block
 #
 # # Create a plotter object
-# plotter = pv.Plotter(shape=(1, 1), border=False, notebook=True, off_screen=False)
+# plotter = pv.Plotter(shape=(1, 2), border=False, notebook=True, off_screen=False)
+# plotter.subplot(0, 0)
+# plot_viscosity(plotter,show_scalar_bar=False)
+# plotter.add_text("Target")
 #
-# # Make a colour map
-# boring_cmap = plt.get_cmap("inferno_r", 25)
+# plotter.subplot(0, 1)
+# plot_viscosity(plotter, **plot_kwargs)
 #
-# # Read last timestep
-# reader.set_active_time_point(15)
-# data = reader.read()[0]
-# # Artificially warp the output data by the displacement field
-# # Note the mesh is not really moving!
-# warped = data.warp_by_vector(vectors="updated displacement", factor=1500)
-# arrows = warped.glyph(orient="updated velocity", scale="updated velocity", factor=1e14, tolerance=0.01)
-# # Add the warped displacement field to the frame
-# plotter.add_mesh(
-#     warped,
-#     scalars="updated displacement",
-#     component=None,
-#     lighting=False,
-#     clim=[0, 600],
-#     cmap=boring_cmap,
-#     scalar_bar_args={
-#         "title": 'Displacement (m)',
-#         "position_x": 0.85,
-#         "position_y": 0.3,
-#         "vertical": True,
-#         "title_font_size": 20,
-#         "label_font_size": 16,
-#         "fmt": "%.0f",
-#         "font_family": "arial",
-#     }
-# )
-#
-# ice_scalar_bar_args = {"title": 'Normalised ice thickness',
-#                        "position_x": 0.1,
-#                        "position_y": 0.3,
-#                        "vertical": True,
-#                        "title_font_size": 22,
-#                        "label_font_size": 18,
-#                        "fmt": "%.1f",
-#                        "font_family": "arial",
-#                        "n_labels": 5,
-#                        }
-#
-# reader = pv.get_reader("updated_ice_thickness.pvd")
-# reader.set_active_time_point(15)
-# add_ice(plotter, reader, 'updated ice thickness', scalar_bar_args=ice_scalar_bar_args)
-#
-# adj_scalar_bar_args = {
-#             "title": 'Adjoint sensitivity',
-#             "position_x": 0.2,
-#             "position_y": 0.05,
-#             "vertical": False,
-#             "title_font_size": 22,
-#             "label_font_size": 18,
-#             "fmt": "%.1e",
-#             "font_family": "arial",
-#             "n_labels": 3,
-#         }
-#
-# adj_reader = pv.get_reader("adj_ice.pvd")
-# adj_reader.set_active_time_point(15)
-# add_sensitivity_ring(plotter, adj_reader, scalar_bar_args=adj_scalar_bar_args)
+# plotter.subplot(0, 0)
+# plot_ice_ring(plotter, fname='ice.pvd', scalar='Ice thickness (target)', **plot_kwargs)
 # plotter.camera_position = 'xy'
+# plotter.subplot(0, 1)
+# plot_ice_ring(plotter, fname='updated_ice_thickness.pvd', scalar='Ice thickness (updated)', timestep=5, thickness_scale=1000, **plot_kwargs)
+#
+# plotter.camera_position = 'xy'
+# plotter.add_text("Optimised")
 # plotter.show(jupyter_backend="static", interactive=False)
-# # Closes and finalizes movie
 # plotter.close()
 # -
 
-# We can see that we have been able to recover two ice sheets in the correct locations and
-# the final displacement pattern is very similar to the target run.
+# We can see that we have been able to recover two ice sheets in the correct locations!
 
 # And we'll write the functional values to a file so that we can test them.
 
-with open("functional_field.txt", "w") as f:
+with open("functional.txt", "w") as f:
     f.write("\n".join(str(x) for x in functional_values))
 
-# We can confirm that
-# the surface misfit has reduced by plotting the objective function at each iteration.
+# We can confirm that the surface misfit has reduced by plotting
+# the objective function at each iteration.
 
 # + tags=["active-ipynb"]
 # plt.semilogy(functional_values)
 # plt.xlabel("Iteration #")
 # plt.ylabel("Functional value")
 # plt.title("Convergence")
+# -

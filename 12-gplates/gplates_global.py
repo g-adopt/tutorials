@@ -7,7 +7,8 @@
 # velocity boundary condition.  This type of simulation has been
 # extensively used over recent decades to study the spatial and
 # temporal evolution of mantle flow.  This tutorial builds on the
-# *idealised 3-D spherical shell geometry simulation* and a user
+# [idealised 3-D spherical
+# shell geometry simulation](../3d_spherical) and you
 # should follow that tutorial prior to this.
 #
 # This example focuses on:
@@ -54,8 +55,7 @@ rmin, rmax, ref_level, nlayers = 1.208, 2.208, 4, 8
 mesh2d = CubedSphereMesh(rmin, refinement_level=ref_level, degree=2)
 mesh = ExtrudedMesh(mesh2d, layers=nlayers, extrusion_type="radial")
 mesh.cartesian = False
-bottom_id, top_id = "bottom", "top"
-domain_volume = assemble(1*dx(domain=mesh))  # Required for a diagnostic calculation.
+boundary = get_boundary_ids(mesh)
 
 V = VectorFunctionSpace(mesh, "CG", 2)  # Velocity function space (vector)
 W = FunctionSpace(mesh, "CG", 1)  # Pressure function space (scalar)
@@ -101,7 +101,7 @@ averager.extrapolate_layer_average(T_avg, averager.get_layer_average(T))
 # Earth's physical properties are primarily characterised by
 # spherically symmetric (depth-dependent) features influenced
 # predominantly by hydrostatic pressure variations. Here, we load a
-# 1-D viscosity profile, as utilised by Ghelichkhan et al. (2021) in
+# 1-D viscosity profile, as utilised by [Ghelichkhan et al. (2021)](https://doi.org/10.1093/gji/ggab108) in
 # *Geophysical Journal International* to model Earth's evolution
 # during the Cenozoic era. We first set up our viscosity function
 # space. The 1-D profile data is located in the file
@@ -148,7 +148,7 @@ Z_near_nullspace = create_stokes_nullspace(Z, closed=False, rotational=True, tra
 # interface provided by G-ADOPT for pyGPlates. Similar to pyGPlates,
 # the G-ADOPT interface requires specific files for loading and
 # processing surface velocities from a reconstruction model. For this
-# tutorial, we will use the study published by Muller et al., 2022.
+# tutorial, we will use the study published by [Muller et al., 2022](https://doi.org/10.5194/se-13-1127-2022).
 # The files can be downloaded from EarthByte's server at:
 # https://earthbyte.org/webdav/ftp/Data_Collections/Muller_etal_2022_SE/Muller_etal_2022_SE_1Ga_Opt_PlateMotionModel_v1.2.zip
 # Download and unzip this file into the current
@@ -201,8 +201,8 @@ plate_reconstruction_model = pyGplatesConnector(
 # For example, the starting time (zero time) and present-day time (zero age) are:
 
 # + tags=["active-ipynb"]
-# log(f"Oldest age is {plate_reconstruction_model.ndtime2age(0.0)}")
-# log(f"non-dimensionalised present-day time: {plate_reconstruction_model.age2ndtime(0.0)}")
+# log(f"Oldest age is {plate_reconstruction_model.ndtime2age(0.0)} Ma")
+# log(f"Non-dimensionalised present-day time: {plate_reconstruction_model.age2ndtime(0.0)}")
 # -
 
 # With the plate reconstruction model loaded using
@@ -220,7 +220,7 @@ plate_reconstruction_model = pyGplatesConnector(
 gplates_velocities = GplatesVelocityFunction(
     V,
     gplates_connector=plate_reconstruction_model,
-    top_boundary_marker=top_id,
+    top_boundary_marker=boundary.top,
     name="GPlates_Velocity"
 )
 
@@ -270,13 +270,13 @@ gplates_velocities = GplatesVelocityFunction(
 
 # +
 stokes_bcs = {
-    bottom_id: {'un': 0},
-    top_id: {'u': gplates_velocities},
+    boundary.bottom: {'un': 0},
+    boundary.top: {'u': gplates_velocities},
 }
 
 temp_bcs = {
-    bottom_id: {'T': 1.0},
-    top_id: {'T': 0.0},
+    boundary.bottom: {'T': 1.0},
+    boundary.top: {'T': 0.0},
 }
 
 output_file = VTKFile("output.pvd")
@@ -285,14 +285,19 @@ output_frequency = 1
 plog = ParameterLog("params.log", mesh)
 plog.log_str("timestep time age dt maxchange u_rms u_rms_top nu_top nu_base energy avg_t")
 
-gd = GeodynamicalDiagnostics(z, T, bottom_id, top_id, quad_degree=6)
+gd = GeodynamicalDiagnostics(z, T, boundary.bottom, boundary.top, quad_degree=6)
 
 energy_solver = EnergySolver(T, u, approximation, delta_t, ImplicitMidpoint, bcs=temp_bcs)
 
-stokes_solver = StokesSolver(z, T, approximation, bcs=stokes_bcs,
-                             constant_jacobian=True,
-                             nullspace=Z_nullspace, transpose_nullspace=Z_nullspace,
-                             near_nullspace=Z_near_nullspace)
+stokes_solver = StokesSolver(
+    z,
+    approximation,
+    T,
+    bcs=stokes_bcs,
+    nullspace=Z_nullspace,
+    transpose_nullspace=Z_nullspace,
+    near_nullspace=Z_near_nullspace,
+)
 # -
 
 # Before we begin with the time-stepping, we need to know when to
@@ -331,8 +336,8 @@ for timestep in range(0, timesteps):
     energy_solver.solve()
 
     # Compute diagnostics:
-    nusselt_number_top = gd.Nu_top() * (rmax*(rmin-rmax)/rmin) * -1.
-    nusselt_number_base = gd.Nu_bottom() * (rmin*(rmax-rmin)/rmax)
+    nusselt_number_top = gd.Nu_top(scale=(rmax * (rmin - rmax) / rmin) * -1.0)
+    nusselt_number_base = gd.Nu_bottom(scale=(rmin * (rmax - rmin) / rmax))
     energy_conservation = abs(abs(nusselt_number_top) - abs(nusselt_number_base))
 
     # Calculate L2-norm of change in temperature:
@@ -361,4 +366,3 @@ with CheckpointFile("Final_State.h5", "w") as final_checkpoint:
     final_checkpoint.save_mesh(mesh)
     final_checkpoint.save_function(T, name="Temperature")
     final_checkpoint.save_function(z, name="Stokes")
-# -

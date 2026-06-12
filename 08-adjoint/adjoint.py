@@ -5,7 +5,7 @@
 # ------------
 # In this tutorial, we will demonstrate how to perform an inversion to recover the initial temperature field of an
 # idealised mantle convection simulation using G-ADOPT. This tutorial is published as the first synthetic experiment in
-# *Ghelichkhan et al. (2024)*. The full inversion showcased in the publication involves a total number of 80 timesteps.
+# [*Ghelichkhan et al. (2024)*](https://doi.org/10.5194/gmd-17-5057-2024). The full inversion showcased in the publication involves a total number of 80 timesteps.
 # For the tutorial here we start with only 5 timesteps to go through the basics.
 #
 # The tutorial involves a *twin experiment*, where we assess the performance of the inversion scheme by inverting the
@@ -43,7 +43,7 @@ mesh.cartesian = True
 
 # Specify boundary markers, noting that for extruded meshes the upper and lower boundaries are tagged as
 # "top" and "bottom" respectively.
-bottom_id, top_id, left_id, right_id = "bottom", "top", 1, 2
+boundary = get_boundary_ids(mesh)
 
 # Retrieve the timestepping information for the Velocity and Temperature functions from checkpoint file:
 temperature_timestepping_info = checkpoint_file.get_timestepping_history(mesh, "Temperature")
@@ -121,7 +121,7 @@ tape.clear_tape()
 # Set up function spaces:
 V = VectorFunctionSpace(mesh, "CG", 2)  # Velocity function space (vector)
 W = FunctionSpace(mesh, "CG", 1)  # Pressure function space (scalar)
-Q = FunctionSpace(mesh, "CG", 2)  # Temperature function space (scalar)
+Q = FunctionSpace(mesh, "DQ", 2)  # Temperature function space (DQ; scalar)
 Z = MixedFunctionSpace([V, W])  # Mixed function space
 
 # Specify test functions and functions to hold solutions:
@@ -145,20 +145,26 @@ Z_nullspace = create_stokes_nullspace(Z, closed=True, rotational=False)
 # Followed by boundary conditions, noting that all boundaries are free slip, whilst the domain is
 # heated from below (T = 1) and cooled from above (T = 0).
 stokes_bcs = {
-    bottom_id: {"uy": 0},
-    top_id: {"uy": 0},
-    left_id: {"ux": 0},
-    right_id: {"ux": 0},
+    boundary.bottom: {"uy": 0},
+    boundary.top: {"uy": 0},
+    boundary.left: {"ux": 0},
+    boundary.right: {"ux": 0},
 }
 temp_bcs = {
-    bottom_id: {"T": 1.0},
-    top_id: {"T": 0.0},
+    boundary.bottom: {"T": 1.0},
+    boundary.top: {"T": 0.0},
 }
 
 # Setup Energy and Stokes solver
 energy_solver = EnergySolver(T, u, approximation, delta_t, ImplicitMidpoint, bcs=temp_bcs)
-stokes_solver = StokesSolver(z, T, approximation, bcs=stokes_bcs,
-                             nullspace=Z_nullspace, transpose_nullspace=Z_nullspace, constant_jacobian=True)
+stokes_solver = StokesSolver(
+    z,
+    approximation,
+    T,
+    bcs=stokes_bcs,
+    nullspace=Z_nullspace,
+    transpose_nullspace=Z_nullspace,
+)
 # -
 
 # Specify Problem Length
@@ -195,7 +201,7 @@ Tic = Function(Q1, name="Initial_Condition_Temperature").assign(Taverage)
 # Given that Tic will be updated during the optimisation, we also create a function to store our initial guess,
 # which we will later use for smoothing. Note that since smoothing is executed in the control space, we must
 # specify boundary conditions on this term in that same Q1 space.
-T0_bcs = [DirichletBC(Q1, 0., top_id), DirichletBC(Q1, 1., bottom_id)]
+T0_bcs = [DirichletBC(Q1, 0., boundary.top), DirichletBC(Q1, 1., boundary.bottom)]
 T0 = Function(Q1, name="Initial_Guess_Temperature").project(Tic, bcs=T0_bcs)
 
 # We next make pyadjoint aware of our control problem:
@@ -371,9 +377,9 @@ minimisation_problem = MinimizationProblem(reduced_functional, bounds=(T_lb, T_u
 # Using the Lin-Moré optimiser
 # ----------------------------
 #
-# In this tutorial, we employ the trust region method of Lin and Moré (1999) implemented in ROL (Rapid Optimization Library).
+# In this tutorial, we employ the trust region method of [Lin and Moré (1999)](https://doi.org/10.1137/S1052623498345075) implemented in [ROL (Rapid Optimization Library)](https://trilinos.github.io/rol.html).
 # Lin-Moré is a truncated Newton method, which involves the repeated application of an iterative algorithm to approximately
-# solve Newton’s equations (Dembo and Steihaug, 1983).
+# solve Newton’s equations ([Dembo and Steihaug, 1983](https://doi.org/10.1007/BF02592055)).
 #
 # Lin-Moré effectively handles provided bound constraints by ensuring that variables remain within their specified bounds.
 # During each iteration, variables are classified into "active" and "inactive" sets. Variables at their bounds that do not
@@ -460,7 +466,6 @@ with open("functional.txt", "w") as f:
 # plotter.camera_position = [(0.5, 0.5, 2.5), (0.5, 0.5, 0), (0, 1, 0)]
 # # Show the plot
 # plotter.show(jupyter_backend="static")
-# -
 
 # + tags=["active-ipynb"]
 # import matplotlib.pyplot as plt
@@ -468,4 +473,3 @@ with open("functional.txt", "w") as f:
 # plt.xlabel("Optimisation iteration")
 # plt.ylabel("Reduced functional")
 # plt.title("Optimisation convergence")
-# -

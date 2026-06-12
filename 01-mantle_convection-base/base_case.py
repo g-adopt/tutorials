@@ -142,7 +142,7 @@
 # basic mantle dynamics problem - isoviscous, incompressible
 # convection, heated from below (T=1), cooled from the top (T=0) in an
 # enclosed 2-D Cartesian box (i.e. free-slip mechanical boundary
-# conditions on all boundaries), from Blankenbach et al. (1989).
+# conditions on all boundaries), from [Blankenbach et al. (1989)](https://doi.org/10.1111/j.1365-246X.1989.tb05511.x).
 #
 # Let's get started! The first step is to import the gadopt module, which
 # provides access to Firedrake and associated functionality.
@@ -176,7 +176,7 @@ except ImportError:
 nx, ny = 40, 40  # Number of cells in x and y directions.
 mesh = UnitSquareMesh(nx, ny, quadrilateral=True)  # Square mesh generated via firedrake
 mesh.cartesian = True
-left_id, right_id, bottom_id, top_id = 1, 2, 3, 4  # Boundary IDs
+boundary = get_boundary_ids(mesh)
 
 # We also need function spaces, which is achieved by associating the
 # mesh with the relevant finite element: V , W and Q are symbolic
@@ -287,15 +287,15 @@ Z_nullspace = create_stokes_nullspace(Z, closed=True, rotational=False)
 
 # +
 stokes_bcs = {
-    bottom_id: {'uy': 0},
-    top_id: {'uy': 0},
-    left_id: {'ux': 0},
-    right_id: {'ux': 0},
+    boundary.bottom: {'uy': 0},
+    boundary.top: {'uy': 0},
+    boundary.left: {'ux': 0},
+    boundary.right: {'ux': 0},
 }
 
 temp_bcs = {
-    bottom_id: {'T': 1.0},
-    top_id: {'T': 0.0},
+    boundary.bottom: {'T': 1.0},
+    boundary.top: {'T': 0.0},
 }
 # -
 
@@ -317,7 +317,7 @@ output_frequency = 50
 plog = ParameterLog('params.log', mesh)
 plog.log_str("timestep time dt maxchange u_rms u_rms_surf ux_max nu_top nu_base energy avg_t")
 
-gd = GeodynamicalDiagnostics(z, T, bottom_id, top_id)
+gd = GeodynamicalDiagnostics(z, T, boundary.bottom, boundary.top)
 # -
 
 # We finally come to solving the variational problem, with solver
@@ -335,9 +335,14 @@ gd = GeodynamicalDiagnostics(z, T, bottom_id, top_id)
 # +
 energy_solver = EnergySolver(T, u, approximation, delta_t, ImplicitMidpoint, bcs=temp_bcs)
 
-stokes_solver = StokesSolver(z, T, approximation, bcs=stokes_bcs,
-                             nullspace=Z_nullspace, transpose_nullspace=Z_nullspace,
-                             constant_jacobian=True)
+stokes_solver = StokesSolver(
+    z,
+    approximation,
+    T,
+    bcs=stokes_bcs,
+    nullspace=Z_nullspace,
+    transpose_nullspace=Z_nullspace,
+)
 # -
 
 # We can now initiate the time-loop, with the Stokes and energy
@@ -372,7 +377,7 @@ for timestep in range(0, timesteps):
 
     # Log diagnostics:
     plog.log_str(f"{timestep} {time} {float(delta_t)} {maxchange} "
-                 f"{gd.u_rms()} {gd.u_rms_top()} {gd.ux_max(top_id)} {gd.Nu_top()} "
+                 f"{gd.u_rms()} {gd.u_rms_top()} {gd.ux_max(boundary.top)} {gd.Nu_top()} "
                  f"{gd.Nu_bottom()} {energy_conservation} {gd.T_avg()} ")
 
     # Leave if steady-state has been achieved:
@@ -400,4 +405,3 @@ with CheckpointFile("Final_State.h5", "w") as final_checkpoint:
 # fig, axes = plt.subplots()
 # collection = tripcolor(T, axes=axes, cmap='coolwarm')
 # fig.colorbar(collection);
-# -
