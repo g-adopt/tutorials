@@ -14,12 +14,11 @@
 
 try:
     from gadopt import *
-    from gadopt.inverse import *
 except ImportError:
-    !wget "https://fem-on-colab.github.io/releases/firedrake-install-real.sh" -O "/tmp/firedrake-install.sh" && bash "/tmp/firedrake-install.sh"
+    !wget "https://fem-on-colab.github.io/releases/firedrake-install-release-real.sh" -O "/tmp/firedrake-install.sh" && bash "/tmp/firedrake-install.sh"
     !pip install gadopt[demos,optimisation]
     from gadopt import *
-    from gadopt.inverse import *
+from gadopt.inverse import *
 
 # Create synthetic twin experiment with final state for a known initial condition.
 # --------------------------------------------------------------------------------

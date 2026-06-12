@@ -28,12 +28,11 @@
 
 try:
     from gadopt import *
-    from gadopt.inverse import *
 except ImportError:
-    !wget "https://fem-on-colab.github.io/releases/firedrake-install-real.sh" -O "/tmp/firedrake-install.sh" && bash "/tmp/firedrake-install.sh"
+    !wget "https://fem-on-colab.github.io/releases/firedrake-install-release-real.sh" -O "/tmp/firedrake-install.sh" && bash "/tmp/firedrake-install.sh"
     !pip install gadopt[demos,optimisation]
     from gadopt import *
-    from gadopt.inverse import *
+from gadopt.inverse import *
 
 # Open the checkpoint file and subsequently load the mesh:
 checkpoint_filename = "adjoint-demo-checkpoint-state.h5"

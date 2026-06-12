@@ -298,12 +298,11 @@
 
 try:
     from gadopt import *
-    from gadopt.utility import extruded_layer_heights, initialise_background_field
 except ImportError:
-    !wget "https://fem-on-colab.github.io/releases/firedrake-install-real.sh" -O "/tmp/firedrake-install.sh" && bash "/tmp/firedrake-install.sh"
+    !wget "https://fem-on-colab.github.io/releases/firedrake-install-release-real.sh" -O "/tmp/firedrake-install.sh" && bash "/tmp/firedrake-install.sh"
     !pip install gadopt[demos]
     from gadopt import *
-    from gadopt.utility import extruded_layer_heights, initialise_background_field
+from gadopt.utility import extruded_layer_heights, initialise_background_field
 
 import numpy as np
 

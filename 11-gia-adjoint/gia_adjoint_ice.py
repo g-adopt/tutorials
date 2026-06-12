@@ -79,7 +79,7 @@
 try:
     from gadopt import *
 except ImportError:
-    !wget "https://fem-on-colab.github.io/releases/firedrake-install-real.sh" -O "/tmp/firedrake-install.sh" && bash "/tmp/firedrake-install.sh"
+    !wget "https://fem-on-colab.github.io/releases/firedrake-install-release-real.sh" -O "/tmp/firedrake-install.sh" && bash "/tmp/firedrake-install.sh"
     !pip install gadopt[demos]
     from gadopt import *
 
@@ -94,13 +94,9 @@ from gadopt.inverse import *
 
 # We also import some G-ADOPT utilities for later use.
 
-from gadopt.utility import (
-    CombinedSurfaceMeasure,
-    initialise_background_field
-)
+from gadopt.utility import CombinedSurfaceMeasure, initialise_background_field
 from gadopt.demos.glacial_isostatic_adjustment.utils import (
-    ice_sheet_disc,
-    setup_heterogenous_viscosity
+    ice_sheet_disc, setup_heterogenous_viscosity
 )
 
 import matplotlib.pyplot as plt

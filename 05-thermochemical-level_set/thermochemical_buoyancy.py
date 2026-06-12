@@ -29,7 +29,7 @@
 try:
     from gadopt import *
 except ImportError:
-    !wget "https://fem-on-colab.github.io/releases/firedrake-install-real.sh" -O "/tmp/firedrake-install.sh" && bash "/tmp/firedrake-install.sh"
+    !wget "https://fem-on-colab.github.io/releases/firedrake-install-release-real.sh" -O "/tmp/firedrake-install.sh" && bash "/tmp/firedrake-install.sh"
     !pip install gadopt[demos]
     !apt install -y gmsh
     from gadopt import *
