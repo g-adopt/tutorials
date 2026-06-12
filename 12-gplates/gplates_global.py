@@ -240,7 +240,6 @@ gplates_velocities = GplatesVelocityFunction(
 # import pyvista as pv
 # pv.set_jupyter_backend("static")
 # pv.global_theme.notebook = True
-# pv.start_xvfb()
 # import os
 # dataset = pv.read("gplates_velocity/gplates_velocity_0.vtu")
 #

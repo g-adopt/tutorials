@@ -59,7 +59,6 @@ except ImportError:
 import pyvista as pv
 pv.set_jupyter_backend("static")
 pv.global_theme.notebook = True
-pv.start_xvfb()
 
 # +
 # Next we define a mesh using the same geometry and grid resolution as the

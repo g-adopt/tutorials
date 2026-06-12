@@ -75,7 +75,6 @@ checkpoint_file.close()
 # import pyvista as pv
 # pv.set_jupyter_backend("static")
 # pv.global_theme.notebook = True
-# pv.start_xvfb()
 #
 # VTKFile("./visualisation_vtk.pvd").write(Tobs, Tic_ref)
 # dataset = pv.read('./visualisation_vtk.pvd')
@@ -453,7 +452,6 @@ with open("functional.txt", "w") as f:
 # could be compared to `Tic_ref` as the "true solution".
 
 # + tags=["active-ipynb"]
-# import pyvista as pv
 # VTKFile("./solution.pvd").write(optimiser.rol_solver.rolvector.dat[0])
 # dataset = pv.read('./solution.pvd')
 # # Create a plotter object

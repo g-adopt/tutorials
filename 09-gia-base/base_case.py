@@ -377,6 +377,8 @@ R = FunctionSpace(mesh, "R", 0)  # Real function space (for constants)
 # + tags=["active-ipynb"]
 # import pyvista as pv
 # import matplotlib.pyplot as plt
+# pv.set_jupyter_backend("static")
+# pv.global_theme.notebook = True
 #
 # VTKFile("mesh.pvd").write(Function(V))
 # mesh_data = pv.read("mesh/mesh_0.vtu")
@@ -664,12 +666,6 @@ plog.close()
 # is not moving in reality!
 
 # + tags=["active-ipynb"]
-# import matplotlib.pyplot as plt
-# import pyvista as pv
-# pv.set_jupyter_backend("static")
-# pv.global_theme.notebook = True
-# pv.start_xvfb()
-#
 # # Read the PVD file
 # reader = pv.get_reader("output.pvd")
 # data = reader.read()[0]  # MultiBlock mesh with only 1 block

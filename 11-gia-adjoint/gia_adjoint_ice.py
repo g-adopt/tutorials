@@ -104,10 +104,7 @@ import numpy as np
 
 # + tags=["active-ipynb"]
 # from gadopt_demo_utils.gia_demo_utils import (
-#    plot_adj_ring,
-#    plot_displacement,
-#    plot_ice_ring,
-#    plot_viscosity,
+#    plot_adj_ring, plot_displacement, plot_ice_ring, plot_viscosity
 # )
 # -
 
@@ -286,7 +283,6 @@ ice_load = B_mu * rho_ice * Hscale * ice_thickness_full
 # import pyvista as pv
 # pv.set_jupyter_backend("static")
 # pv.global_theme.notebook = True
-# pv.start_xvfb()
 #
 # plot_kwargs = {'scalar_bar_vertical': False,
 #                'scalar_bar_x': 0.2,

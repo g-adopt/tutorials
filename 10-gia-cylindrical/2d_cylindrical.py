@@ -29,8 +29,7 @@ import numpy as np
 # as well as a helper function to setup the lateral viscosity variations
 
 from gadopt.demos.glacial_isostatic_adjustment.utils import (
-    ice_sheet_disc,
-    setup_heterogenous_viscosity
+    ice_sheet_disc, setup_heterogenous_viscosity
 )
 
 # We also import some helper functions for plotting and making animations associated
@@ -38,9 +37,7 @@ from gadopt.demos.glacial_isostatic_adjustment.utils import (
 
 # + tags=["active-ipynb"]
 # from gadopt_demo_utils.gia_demo_utils import (
-#     plot_ice_ring,
-#     plot_viscosity,
-#     plot_animation
+#     plot_animation, plot_ice_ring, plot_viscosity
 # )
 # -
 
@@ -106,11 +103,10 @@ log("Number of Internal variable DOF:", S.dim())
 # We can now visualise the resulting mesh.
 
 # + tags=["active-ipynb"]
+# import matplotlib.pyplot as plt
 # import pyvista as pv
 # pv.set_jupyter_backend("static")
 # pv.global_theme.notebook = True
-# pv.start_xvfb()
-# import matplotlib.pyplot as plt
 #
 # VTKFile("mesh.pvd").write(Function(V))
 # mesh_data = pv.read("mesh/mesh_0.vtu")
@@ -359,9 +355,6 @@ obj_chk.close()
 # is not moving in reality!
 
 # + tags=["active-ipynb"]
-# import matplotlib.pyplot as plt
-# import pyvista as pv
-#
 # # Read the PVD file
 # reader = pv.get_reader("output.pvd")
 # data = reader.read()[0]  # MultiBlock mesh with only 1 block
